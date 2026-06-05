@@ -274,13 +274,45 @@ function convertMessages(messages, tools, model) {
     }
   }
 
-  // Inject tools into currentMessage AFTER cleanup
-  if (firstHistoryTools && currentMessage?.userInputMessage &&
+  // Inject tools into currentMessage AFTER cleanup.
+  //
+  // Kiro rejects the whole request with "Improperly formed request" if an
+  // assistant `toolUses` entry references a tool that is not declared on the
+  // currentMessage. This happens when a client sends a transcript containing
+  // tool calls but omits the `tools` field - e.g. Claude Code's `/goal`
+  // stop-hook evaluator, which replays the conversation (with tool_use /
+  // tool_result blocks) but does not resend tool definitions.
+  //
+  // So: start from whatever the client declared, then synthesize a minimal
+  // spec for any tool referenced in history that is still undeclared.
+  if (currentMessage?.userInputMessage &&
       !currentMessage.userInputMessage.userInputMessageContext?.tools) {
-    if (!currentMessage.userInputMessage.userInputMessageContext) {
-      currentMessage.userInputMessage.userInputMessageContext = {};
+    const specs = Array.isArray(firstHistoryTools) ? [...firstHistoryTools] : [];
+    const declared = new Set(specs.map(s => s?.toolSpecification?.name).filter(Boolean));
+
+    for (const item of mergedHistory) {
+      const toolUses = item?.assistantResponseMessage?.toolUses;
+      if (!Array.isArray(toolUses)) continue;
+      for (const tu of toolUses) {
+        if (tu?.name && !declared.has(tu.name)) {
+          specs.push({
+            toolSpecification: {
+              name: tu.name,
+              description: `Tool: ${tu.name}`,
+              inputSchema: { json: { type: "object", properties: {}, required: [] } }
+            }
+          });
+          declared.add(tu.name);
+        }
+      }
     }
-    currentMessage.userInputMessage.userInputMessageContext.tools = firstHistoryTools;
+
+    if (specs.length > 0) {
+      if (!currentMessage.userInputMessage.userInputMessageContext) {
+        currentMessage.userInputMessage.userInputMessageContext = {};
+      }
+      currentMessage.userInputMessage.userInputMessageContext.tools = specs;
+    }
   }
 
   return { history: mergedHistory, currentMessage };
