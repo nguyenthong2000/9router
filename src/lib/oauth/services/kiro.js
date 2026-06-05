@@ -182,6 +182,8 @@ export class KiroService {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Accept": "application/json",
+          "User-Agent": "kiro-cli/1.0.0",
         },
         body: JSON.stringify({
           clientId,
@@ -205,10 +207,14 @@ export class KiroService {
     }
 
     // Social auth refresh (Google/GitHub)
+    // The Kiro auth service requires the kiro-cli User-Agent and Accept headers,
+    // otherwise it rejects the request with {"message":"Bad credentials"}.
     const response = await fetch(`${KIRO_AUTH_SERVICE}/refreshToken`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": "kiro-cli/1.0.0",
       },
       body: JSON.stringify({
         refreshToken,
@@ -231,8 +237,15 @@ export class KiroService {
 
   /**
    * Validate and import refresh token
+   *
+   * @param {string} refreshToken Kiro refresh token (starts with aorAAAAAG)
+   * @param {object} [providerSpecificData] Optional auth metadata recovered from
+   *        the local AWS SSO cache. For Builder ID / IdC tokens this must include
+   *        clientId, clientSecret and region so the refresh is routed to the AWS
+   *        SSO OIDC endpoint instead of the social endpoint (which rejects them
+   *        with {"message":"Bad credentials"}).
    */
-  async validateImportToken(refreshToken) {
+  async validateImportToken(refreshToken, providerSpecificData = {}) {
     // Validate token format
     if (!refreshToken.startsWith("aorAAAAAG")) {
       throw new Error("Invalid token format. Token should start with aorAAAAAG...");
@@ -240,17 +253,114 @@ export class KiroService {
 
     // Try to refresh to validate
     try {
-      const result = await this.refreshToken(refreshToken);
+      const result = await this.refreshToken(refreshToken, providerSpecificData);
       return {
         accessToken: result.accessToken,
         refreshToken: result.refreshToken || refreshToken,
-        profileArn: result.profileArn,
+        profileArn: result.profileArn || providerSpecificData.profileArn,
         expiresIn: result.expiresIn,
-        authMethod: "imported",
+        authMethod: providerSpecificData.authMethod || "imported",
       };
     } catch (error) {
       throw new Error(`Token validation failed: ${error.message}`);
     }
+  }
+
+  /**
+   * List available CodeWhisperer profiles for the authenticated account.
+   *
+   * AWS Builder ID / IAM Identity Center (IdC) accounts must send a valid
+   * profileArn on every CodeWhisperer call; without it the API responds with
+   * 403 "User is not authorized to make this call". The profileArn is not part
+   * of the token file, so it has to be discovered with this call.
+   *
+   * @param {string} accessToken Bearer access token
+   * @param {string} [region]    AWS region to query (profiles live in specific regions)
+   * @returns {Promise<Array<{ arn: string, profileName?: string, region?: string }>>}
+   */
+  async listAvailableProfiles(accessToken, region = "us-east-1") {
+    const endpoint = `https://codewhisperer.${region}.amazonaws.com/`;
+
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-amz-json-1.0",
+        "x-amz-target": "AmazonCodeWhispererService.ListAvailableProfiles",
+        "Authorization": `Bearer ${accessToken}`,
+        "Accept": "application/json",
+      },
+      body: JSON.stringify({ maxResults: 10 }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Failed to list profiles: ${error}`);
+    }
+
+    const data = await response.json();
+    return (data.profiles || []).map(p => ({
+      arn: p.arn,
+      profileName: p.profileName,
+      region: p.identityDetails?.ssoIdentityDetails?.ssoRegion || region,
+    }));
+  }
+
+  /**
+   * Resolve the profileArn for an account, trying the preferred region first
+   * then the other regions Kiro supports (US East / EU Frankfurt).
+   *
+   * @param {string} accessToken Bearer access token
+   * @param {string} [preferredRegion]
+   * @returns {Promise<{ profileArn: string, region: string } | null>}
+   */
+  async resolveProfileArn(accessToken, preferredRegion = "us-east-1") {
+    const regions = [...new Set([preferredRegion || "us-east-1", "us-east-1", "eu-central-1"])];
+    for (const region of regions) {
+      try {
+        const profiles = await this.listAvailableProfiles(accessToken, region);
+        if (profiles.length > 0) {
+          return { profileArn: profiles[0].arn, region: profiles[0].region || region };
+        }
+      } catch {
+        // Try the next region.
+      }
+    }
+    return null;
+  }
+
+  /**
+   * List every available profile across the regions Kiro supports, de-duped by
+   * arn. Used by the import flow so a user with more than one profile can pick
+   * which one to connect instead of silently getting the first.
+   *
+   * @param {string} accessToken Bearer access token
+   * @param {string} [preferredRegion]
+   * @returns {Promise<Array<{ arn: string, profileName?: string, region: string }>>}
+   */
+  async listAllProfiles(accessToken, preferredRegion = "us-east-1") {
+    const regions = [...new Set([preferredRegion || "us-east-1", "us-east-1", "eu-central-1"])];
+    const all = [];
+    const seen = new Set();
+    for (const region of regions) {
+      let profiles = [];
+      try {
+        profiles = await this.listAvailableProfiles(accessToken, region);
+      } catch {
+        continue;
+      }
+      for (const p of profiles) {
+        if (p.arn && !seen.has(p.arn)) {
+          seen.add(p.arn);
+          all.push({ arn: p.arn, profileName: p.profileName, region: p.region || region });
+        }
+      }
+      // Common case is a single region: once we have profiles from the
+      // preferred / us-east-1 regions, skip probing eu-central-1.
+      if (all.length > 0 && region !== "eu-central-1") {
+        break;
+      }
+    }
+    return all;
   }
 
   /**

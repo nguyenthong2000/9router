@@ -11,13 +11,18 @@ import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
  * - Remote: Manual paste callback URL
  */
 export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, onClose, oauthMeta, idcConfig }) {
-  const [step, setStep] = useState("waiting"); // waiting | input | success | error
+  const [step, setStep] = useState("waiting"); // waiting | input | success | error | select_profile
   const [authData, setAuthData] = useState(null);
   const [callbackUrl, setCallbackUrl] = useState("");
   const [error, setError] = useState(null);
   const [isDeviceCode, setIsDeviceCode] = useState(false);
   const [deviceData, setDeviceData] = useState(null);
   const [polling, setPolling] = useState(false);
+  // Kiro multi-profile selection (only triggered when an account has >1 profile)
+  const [profileChoices, setProfileChoices] = useState(null);
+  const [selectionId, setSelectionId] = useState(null);
+  const [selectedProfileArn, setSelectedProfileArn] = useState(null);
+  const [confirmingProfile, setConfirmingProfile] = useState(false);
   const popupRef = useRef(null);
   const pollingAbortRef = useRef(false);
   const { copied, copy } = useCopyToClipboard();
@@ -121,6 +126,18 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
 
         const data = await res.json();
 
+        if (data.success && data.needsProfileSelection) {
+          // Kiro account has multiple profiles - stop polling and let the user
+          // pick one. The connection is saved on confirm.
+          pollingAbortRef.current = true;
+          setPolling(false);
+          setProfileChoices(data.profiles || []);
+          setSelectionId(data.selectionId);
+          setSelectedProfileArn(data.profiles?.[0]?.arn || null);
+          setStep("select_profile");
+          return;
+        }
+
         if (data.success) {
           pollingAbortRef.current = true; // Stop polling immediately
           setStep("success");
@@ -148,6 +165,28 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
     setStep("error");
     setPolling(false);
   }, [provider, onSuccess]);
+
+  // Confirm chosen Kiro profile (saves the connection from the pending entry)
+  const confirmKiroProfile = useCallback(async () => {
+    if (!selectedProfileArn || !selectionId) return;
+    setConfirmingProfile(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/oauth/kiro/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectionId, profileArn: selectedProfileArn }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to save profile");
+      setStep("success");
+      onSuccess?.();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setConfirmingProfile(false);
+    }
+  }, [selectedProfileArn, selectionId, onSuccess]);
 
   // Start OAuth flow
   const startOAuthFlow = useCallback(async () => {
@@ -316,6 +355,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
       setIsDeviceCode(false);
       setDeviceData(null);
       setPolling(false);
+      setProfileChoices(null);
+      setSelectionId(null);
+      setSelectedProfileArn(null);
       pollingAbortRef.current = false;
       startOAuthFlow();
     } else if (!isOpen) {
@@ -625,6 +667,60 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
               </div>
             )}
           </>
+        )}
+
+        {/* Profile selection (Kiro accounts with multiple profiles) */}
+        {step === "select_profile" && (
+          <div className="space-y-4">
+            <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
+              <div className="flex gap-2">
+                <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">badge</span>
+                <p className="text-sm text-blue-800 dark:text-blue-200">
+                  This account has multiple Kiro profiles. Choose which one to connect.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {(profileChoices || []).map((p) => (
+                <button
+                  key={p.arn}
+                  onClick={() => setSelectedProfileArn(p.arn)}
+                  className={`w-full p-3 text-left border rounded-lg transition-colors ${
+                    selectedProfileArn === p.arn
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:bg-sidebar"
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className={`material-symbols-outlined mt-0.5 ${selectedProfileArn === p.arn ? "text-primary" : "text-text-muted"}`}>
+                      {selectedProfileArn === p.arn ? "radio_button_checked" : "radio_button_unchecked"}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium">{p.profileName || "Kiro Profile"}</div>
+                      <div className="text-xs text-text-muted font-mono break-all">{p.arn}</div>
+                      {p.region && (
+                        <div className="text-xs text-text-muted mt-0.5">Region: {p.region}</div>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+
+            {error && (
+              <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+            )}
+
+            <div className="flex gap-2">
+              <Button onClick={confirmKiroProfile} fullWidth disabled={confirmingProfile || !selectedProfileArn}>
+                {confirmingProfile ? "Connecting..." : "Connect Selected Profile"}
+              </Button>
+              <Button onClick={handleClose} variant="ghost" fullWidth>
+                Cancel
+              </Button>
+            </div>
+          </div>
         )}
 
         {/* Success Step */}

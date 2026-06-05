@@ -295,6 +295,51 @@ export async function POST(request, { params }) {
       }
 
       if (result.success) {
+        // Kiro Builder ID / IdC accounts require a profileArn on every
+        // CodeWhisperer call. Resolve it; if the account exposes multiple
+        // profiles, defer saving and ask the UI to pick one (confirmed via
+        // POST /api/oauth/kiro/import with the returned selectionId).
+        if (provider === "kiro" && result.tokens?.accessToken
+          && !result.tokens?.providerSpecificData?.profileArn) {
+          try {
+            const { KiroService } = await import("@/lib/oauth/services/kiro");
+            const svc = new KiroService();
+            const region = result.tokens.providerSpecificData?.region || "us-east-1";
+            const profiles = await svc.listAllProfiles(result.tokens.accessToken, region);
+
+            if (profiles.length > 1) {
+              const { putPendingKiroImport } = await import("@/lib/oauth/services/kiroPendingImport");
+              const selectionId = putPendingKiroImport({
+                accessToken: result.tokens.accessToken,
+                refreshToken: result.tokens.refreshToken,
+                expiresIn: result.tokens.expiresIn,
+                providerSpecificData: result.tokens.providerSpecificData || {},
+                profiles,
+              });
+              return NextResponse.json({
+                success: true,
+                needsProfileSelection: true,
+                selectionId,
+                profiles: profiles.map(p => ({
+                  arn: p.arn,
+                  profileName: p.profileName || null,
+                  region: p.region || null,
+                })),
+              });
+            }
+
+            if (profiles.length === 1) {
+              result.tokens.providerSpecificData = {
+                ...result.tokens.providerSpecificData,
+                profileArn: profiles[0].arn,
+                region: profiles[0].region || region,
+              };
+            }
+          } catch {
+            // Best effort - connection still saved without profileArn.
+          }
+        }
+
         // Save to database
         const connection = await createProviderConnection({
           provider,

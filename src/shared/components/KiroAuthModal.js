@@ -17,6 +17,10 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
   const [importing, setImporting] = useState(false);
   const [autoDetecting, setAutoDetecting] = useState(false);
   const [autoDetected, setAutoDetected] = useState(false);
+  // Multi-profile selection (only used when an account exposes >1 profile)
+  const [profileChoices, setProfileChoices] = useState(null);
+  const [selectionId, setSelectionId] = useState(null);
+  const [selectedProfileArn, setSelectedProfileArn] = useState(null);
 
   // Auto-detect token when import method is selected
   useEffect(() => {
@@ -26,6 +30,9 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
       setAutoDetecting(true);
       setError(null);
       setAutoDetected(false);
+      setProfileChoices(null);
+      setSelectionId(null);
+      setSelectedProfileArn(null);
 
       try {
         const res = await fetch("/api/oauth/kiro/auto-import");
@@ -55,6 +62,9 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
   const handleBack = () => {
     setSelectedMethod(null);
     setError(null);
+    setProfileChoices(null);
+    setSelectionId(null);
+    setSelectedProfileArn(null);
   };
 
   const handleImportToken = async () => {
@@ -79,7 +89,49 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
         throw new Error(data.error || "Import failed");
       }
 
+      // Account exposes multiple profiles - show picker instead of saving.
+      if (data.needsProfileSelection) {
+        setProfileChoices(data.profiles || []);
+        setSelectionId(data.selectionId);
+        setSelectedProfileArn(data.profiles?.[0]?.arn || null);
+        return;
+      }
+
       // Success - notify parent to refresh connections
+      onMethodSelect("import");
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleConfirmProfile = async () => {
+    if (!selectedProfileArn) {
+      setError("Please choose a profile");
+      return;
+    }
+
+    setImporting(true);
+    setError(null);
+
+    try {
+      const res = await fetch("/api/oauth/kiro/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          refreshToken: refreshToken.trim(),
+          selectionId,
+          profileArn: selectedProfileArn,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Import failed");
+      }
+
       onMethodSelect("import");
     } catch (err) {
       setError(err.message);
@@ -315,7 +367,7 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
             )}
 
             {/* Form (shown after auto-detect completes) */}
-            {!autoDetecting && (
+            {!autoDetecting && !profileChoices && (
               <>
                 {/* Success message if auto-detected */}
                 {autoDetected && (
@@ -368,6 +420,62 @@ export default function KiroAuthModal({ isOpen, onMethodSelect, onClose }) {
                   </Button>
                 </div>
               </>
+            )}
+
+            {/* Profile selection (only when the account exposes >1 profile) */}
+            {!autoDetecting && profileChoices && (
+              <div className="space-y-4">
+                <div className="bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800">
+                  <div className="flex gap-2">
+                    <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">badge</span>
+                    <p className="text-sm text-blue-800 dark:text-blue-200">
+                      This account has multiple Kiro profiles. Choose which one to connect.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {profileChoices.map((p) => (
+                    <button
+                      key={p.arn}
+                      onClick={() => setSelectedProfileArn(p.arn)}
+                      className={`w-full p-3 text-left border rounded-lg transition-colors ${
+                        selectedProfileArn === p.arn
+                          ? "border-primary bg-primary/5"
+                          : "border-border hover:bg-sidebar"
+                      }`}
+                    >
+                      <div className="flex items-start gap-2">
+                        <span className={`material-symbols-outlined mt-0.5 ${selectedProfileArn === p.arn ? "text-primary" : "text-text-muted"}`}>
+                          {selectedProfileArn === p.arn ? "radio_button_checked" : "radio_button_unchecked"}
+                        </span>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium">{p.profileName || "Kiro Profile"}</div>
+                          <div className="text-xs text-text-muted font-mono break-all">{p.arn}</div>
+                          {p.region && (
+                            <div className="text-xs text-text-muted mt-0.5">Region: {p.region}</div>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+
+                {error && (
+                  <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-lg border border-red-200 dark:border-red-800">
+                    <p className="text-sm text-red-600 dark:text-red-400">{error}</p>
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <Button onClick={handleConfirmProfile} fullWidth disabled={importing || !selectedProfileArn}>
+                    {importing ? "Importing..." : "Import Selected Profile"}
+                  </Button>
+                  <Button onClick={handleBack} variant="ghost" fullWidth>
+                    Back
+                  </Button>
+                </div>
+              </div>
             )}
           </div>
         )}
