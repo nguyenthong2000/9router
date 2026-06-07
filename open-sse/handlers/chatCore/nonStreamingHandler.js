@@ -126,6 +126,65 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
 }
 
 /**
+ * Convert an OpenAI chat.completion JSON into an Anthropic Messages response.
+ *
+ * Needed for non-streaming Claude clients (e.g. Claude Code's /goal stop-hook
+ * evaluator, which sends stream:false to /v1/messages) talking to providers
+ * whose executor yields OpenAI-shaped output (e.g. kiro). Without this the
+ * client receives an OpenAI `chat.completion` body and rejects it as
+ * "empty or malformed response (HTTP 200)".
+ */
+export function openaiResponseToClaude(resp, fallbackModel) {
+  const choice = resp?.choices?.[0] || {};
+  const msg = choice.message || {};
+  const content = [];
+
+  if (typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0) {
+    content.push({ type: "thinking", thinking: msg.reasoning_content });
+  }
+  if (typeof msg.content === "string" && msg.content.length > 0) {
+    content.push({ type: "text", text: msg.content });
+  }
+  if (Array.isArray(msg.tool_calls)) {
+    for (const tc of msg.tool_calls) {
+      let input = {};
+      try { input = tc.function?.arguments ? JSON.parse(tc.function.arguments) : {}; }
+      catch { input = {}; }
+      content.push({
+        type: "tool_use",
+        id: tc.id || `toolu_${Math.random().toString(36).slice(2)}`,
+        name: tc.function?.name || "",
+        input
+      });
+    }
+  }
+  // Anthropic requires at least one content block.
+  if (content.length === 0) content.push({ type: "text", text: "" });
+
+  const fr = choice.finish_reason;
+  let stopReason = "end_turn";
+  if (fr === "tool_calls") stopReason = "tool_use";
+  else if (fr === "length") stopReason = "max_tokens";
+
+  const usage = resp.usage || {};
+  const rawId = (resp.id || `${Date.now()}`).toString().replace(/^chatcmpl-/, "");
+
+  return {
+    id: rawId.startsWith("msg_") ? rawId : `msg_${rawId}`,
+    type: "message",
+    role: "assistant",
+    model: resp.model || fallbackModel || "unknown",
+    content,
+    stop_reason: stopReason,
+    stop_sequence: null,
+    usage: {
+      input_tokens: usage.prompt_tokens || 0,
+      output_tokens: usage.completion_tokens || 0
+    }
+  };
+}
+
+/**
  * Handle non-streaming response from provider.
  */
 export async function handleNonStreamingResponse({ providerResponse, provider, model, sourceFormat, targetFormat, body, stream, translatedBody, finalBody, requestStartTime, connectionId, apiKey, clientRawRequest, onRequestSuccess, reqLogger, toolNameMap, trackDone, appendLog }) {
@@ -189,6 +248,13 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     translatedResponse.usage = filterUsageForFormat(addBufferToUsage(translatedResponse.usage), sourceFormat);
   }
 
+  // Claude clients (e.g. Claude Code's /goal stop-hook with stream:false) need
+  // an Anthropic Messages object. translatedResponse is OpenAI-shaped here, so
+  // convert it; otherwise the client rejects it as "empty or malformed".
+  const clientBody = (sourceFormat === FORMATS.CLAUDE && translatedResponse?.choices)
+    ? openaiResponseToClaude(translatedResponse, model)
+    : translatedResponse;
+
   // Strip reasoning_content — some clients (e.g. Firecrawl AI SDK) have JSON parsers that
   // break on this non-standard field, even though OpenAI allows it in extensions.
   if (translatedResponse?.choices) {
@@ -219,7 +285,7 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
 
   return {
     success: true,
-    response: new Response(JSON.stringify(translatedResponse), {
+    response: new Response(JSON.stringify(clientBody), {
       headers: { "Content-Type": "application/json", "Access-Control-Allow-Origin": "*" }
     })
   };
