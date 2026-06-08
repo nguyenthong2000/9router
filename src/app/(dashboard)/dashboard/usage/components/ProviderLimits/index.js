@@ -997,14 +997,56 @@ export default function ProviderLimits() {
                       />
                     </div>
                     <div className="min-w-0">
-                      <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
-                        {conn.provider}
-                      </h3>
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="text-sm font-semibold text-text-primary capitalize truncate">
+                          {conn.provider}
+                        </h3>
+                        {/* Codex plan badge */}
+                        {conn.provider === "codex" && quotaData[conn.id]?.quotas?._codexMeta?.plan && (
+                          <span className={`shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full ${
+                            quotaData[conn.id].quotas._codexMeta.plan === "team" ? "bg-blue-500/10 text-blue-600 dark:text-blue-400" :
+                            quotaData[conn.id].quotas._codexMeta.plan === "plus" ? "bg-purple-500/10 text-purple-600 dark:text-purple-400" :
+                            quotaData[conn.id].quotas._codexMeta.plan === "pro" ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" :
+                            quotaData[conn.id].quotas._codexMeta.plan === "enterprise" ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" :
+                            "bg-gray-500/10 text-gray-600 dark:text-gray-400"
+                          }`}>
+                            {quotaData[conn.id].quotas._codexMeta.plan}
+                          </span>
+                        )}
+                        {/* Codex limit reached warning */}
+                        {conn.provider === "codex" && quotaData[conn.id]?.quotas?._codexMeta?.limitReached && (
+                          <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded-full bg-red-500/10 text-red-600 dark:text-red-400">
+                            limit reached
+                          </span>
+                        )}
+                      </div>
                       {getConnectionLabel(conn) ? (
                         <p className="text-xs text-text-muted truncate">
                           {getConnectionLabel(conn)}
                         </p>
                       ) : null}
+                      {/* Codex credits info */}
+                      {conn.provider === "codex" && quotaData[conn.id]?.quotas?._codexMeta?.credits && (
+                        <div className="flex items-center gap-2 mt-0.5">
+                          {quotaData[conn.id].quotas._codexMeta.credits.unlimited ? (
+                            <span className="text-[10px] text-emerald-600 dark:text-emerald-400">∞ unlimited</span>
+                          ) : quotaData[conn.id].quotas._codexMeta.credits.balance !== null ? (
+                            <span className="text-[10px] text-text-muted">
+                              Balance: <span className="font-medium text-text-primary">{quotaData[conn.id].quotas._codexMeta.credits.balance}</span>
+                            </span>
+                          ) : null}
+                          {quotaData[conn.id].quotas._codexMeta.credits.approxCloudMessages !== null && (
+                            <span className="text-[10px] text-text-muted">
+                              ~<span className="font-medium text-text-primary">{quotaData[conn.id].quotas._codexMeta.credits.approxCloudMessages}</span> cloud msgs
+                            </span>
+                          )}
+                          {quotaData[conn.id].quotas._codexMeta.credits.approxLocalMessages !== null && (
+                            <span className="text-[10px] text-text-muted">
+                              ~<span className="font-medium text-text-primary">{quotaData[conn.id].quotas._codexMeta.credits.approxLocalMessages}</span> local msgs
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
 

@@ -699,11 +699,32 @@ async function getCodexUsage(accessToken, proxyOptions = null) {
     appendCodexQuotaWindows(quotas, "", normalRateLimit);
     appendCodexQuotaWindows(quotas, "review", reviewRateLimit);
 
+    // Parse credits info (available for free/plus accounts)
+    const credits = data.credits || {};
+    const creditsInfo = {
+      hasCredits: credits.has_credits || false,
+      unlimited: credits.unlimited || false,
+      balance: credits.balance,
+      approxLocalMessages: credits.approx_local_messages,
+      approxCloudMessages: credits.approx_cloud_messages,
+      overageLimitReached: credits.overage_limit_reached || false,
+    };
+
+    // Parse spend control (team/enterprise)
+    const spendControl = data.spend_control || {};
+
     return {
       plan: data.plan_type || data.summary?.plan || "unknown",
+      email: data.email || null,
+      accountId: data.account_id || null,
       limitReached: getCodexRateLimitBody(normalRateLimit)?.limit_reached || false,
       reviewLimitReached: getCodexRateLimitBody(reviewRateLimit)?.limit_reached || false,
       quotas,
+      // Extended info
+      credits: creditsInfo,
+      spendControlReached: spendControl.reached || false,
+      individualLimit: spendControl.individual_limit,
+      rateLimitResetCredits: data.rate_limit_reset_credits?.available_count || 0,
     };
   } catch (error) {
     throw new Error(`Failed to fetch Codex usage: ${error.message}`);

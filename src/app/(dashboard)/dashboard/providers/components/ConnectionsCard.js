@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import PropTypes from "prop-types";
-import { Card, Badge, Button, Modal, Select, Toggle, EditConnectionModal, ConfirmModal } from "@/shared/components";
+import { Card, Badge, Button, Modal, Select, Toggle, EditConnectionModal, ConfirmModal, CodexImportModal } from "@/shared/components";
 
 // ── CooldownTimer ──────────────────────────────────────────────
 function CooldownTimer({ until }) {
@@ -306,6 +306,7 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
   const [showAddModal, setShowAddModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
+  const [showCodexImport, setShowCodexImport] = useState(false);
   const [providerStrategy, setProviderStrategy] = useState(null);
   const [providerStickyLimit, setProviderStickyLimit] = useState("1");
   const [confirmState, setConfirmState] = useState(null);
@@ -434,7 +435,12 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
         {connections.length === 0 ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-sm text-text-muted">No connections yet</p>
-            <Button size="sm" icon="add" onClick={() => setShowAddModal(true)}>Add Connection</Button>
+            <div className="flex items-center gap-2">
+              {providerId === "codex" && (
+                <Button size="sm" variant="secondary" icon="data_object" onClick={() => setShowCodexImport(true)}>Import JSON</Button>
+              )}
+              <Button size="sm" icon="add" onClick={() => setShowAddModal(true)}>Add Connection</Button>
+            </div>
           </div>
         ) : (
           <>
@@ -456,8 +462,11 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
                 />
               ))}
             </div>
-            <div className="mt-4 flex justify-stretch sm:justify-start">
+            <div className="mt-4 flex flex-wrap justify-stretch gap-2 sm:justify-start">
               <Button size="sm" icon="add" onClick={() => setShowAddModal(true)}>Add</Button>
+              {providerId === "codex" && (
+                <Button size="sm" variant="secondary" icon="data_object" onClick={() => setShowCodexImport(true)}>Import JSON</Button>
+              )}
             </div>
           </>
         )}
@@ -477,6 +486,14 @@ export default function ConnectionsCard({ providerId, isOAuth }) {
         onSave={handleUpdateConnection}
         onClose={() => setShowEditModal(false)}
       />
+
+      {providerId === "codex" && (
+        <CodexImportModal
+          isOpen={showCodexImport}
+          onSuccess={() => fetch_()}
+          onClose={() => setShowCodexImport(false)}
+        />
+      )}
 
       {/* Confirm Modal */}
       <ConfirmModal

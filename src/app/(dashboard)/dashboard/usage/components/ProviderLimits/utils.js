@@ -145,6 +145,17 @@ export function parseQuotaData(provider, data) {
             });
           });
         }
+        // Attach extra codex info for display in card header
+        normalizedQuotas._codexMeta = {
+          plan: data.plan || null,
+          email: data.email || null,
+          accountId: data.accountId || null,
+          limitReached: data.limitReached || false,
+          reviewLimitReached: data.reviewLimitReached || false,
+          credits: data.credits || null,
+          spendControlReached: data.spendControlReached || false,
+          rateLimitResetCredits: data.rateLimitResetCredits || 0,
+        };
         break;
 
       case "kiro":
