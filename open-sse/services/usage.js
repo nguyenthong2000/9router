@@ -76,7 +76,7 @@ export async function getUsageForProvider(connection, proxyOptions = null) {
     case "codex":
       return await getCodexUsage(accessToken, proxyOptions);
     case "kiro":
-      return await getKiroUsage(accessToken, providerSpecificData, proxyOptions);
+      return await getKiroUsage(accessToken, providerSpecificData, proxyOptions, apiKey);
     case "qoder":
       return await getQoderUsage(accessToken, proxyOptions);
     case "qwen":
@@ -773,7 +773,7 @@ function parseKiroQuotaData(data) {
   };
 }
 
-async function getKiroUsage(accessToken, providerSpecificData, proxyOptions = null) {
+async function getKiroUsage(accessToken, providerSpecificData, proxyOptions = null, apiKey = null) {
   // Default profileArn fallback
   const DEFAULT_PROFILE_ARN = "arn:aws:codewhisperer:us-east-1:638616132270:profile/AAAACCCCXXXX";
   const profileArn = providerSpecificData?.profileArn || DEFAULT_PROFILE_ARN;
@@ -784,6 +784,45 @@ async function getKiroUsage(accessToken, providerSpecificData, proxyOptions = nu
     origin: "AI_EDITOR",
     resourceType: "AGENTIC_REQUEST",
   });
+
+  // Kiro API key (ksk_) path: the key is used directly as a bearer token but
+  // requires the `tokentype: API_KEY` header. No profileArn is needed. This is
+  // tried first whenever an apiKey is present.
+  if (apiKey) {
+    const attempt = await proxyAwareFetch(
+      `https://codewhisperer.us-east-1.amazonaws.com/getUsageLimits?${getUsageParams.toString()}`,
+      {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "tokentype": "API_KEY",
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "x-amzn-codewhisperer-optout": "true",
+          "x-amz-user-agent": "aws-sdk-js/1.0.27 KiroIDE-0.7.45",
+          "user-agent": "aws-sdk-js/1.0.27 KiroIDE-0.7.45",
+        },
+      },
+      proxyOptions
+    ).catch((e) => ({ ok: false, status: 0, _err: e.message }));
+
+    if (attempt.ok) {
+      const data = await attempt.json();
+      return parseKiroQuotaData(data);
+    }
+
+    const errText = attempt._err || await attempt.text?.().catch(() => "") || "";
+    if (attempt.status === 401 || attempt.status === 403) {
+      return {
+        message: "Kiro quota API rejected this API key. Chat may still work.",
+        quotas: {},
+      };
+    }
+    return {
+      message: `Unable to fetch Kiro usage right now. (apikey:${attempt.status}${errText ? `:${errText}` : ""})`,
+      quotas: {},
+    };
+  }
 
   // For compatibility, try multiple known Kiro usage endpoints
   const attempts = [

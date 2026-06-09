@@ -482,6 +482,19 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
         const valid = res.status !== 401 && res.status !== 403;
         return { valid, error: valid ? null : "Invalid API key" };
       }
+      case "kiro": {
+        // Kiro API key (ksk_) auth: bearer token + the required tokentype
+        // header. getUsageLimits is read-only and consumes no credits.
+        const url = "https://codewhisperer.us-east-1.amazonaws.com/getUsageLimits?origin=AI_EDITOR&resourceType=AGENTIC_REQUEST&isEmailRequired=true";
+        const res = await fetchWithConnectionProxy(url, {
+          headers: {
+            "Authorization": `Bearer ${connection.apiKey}`,
+            "tokentype": "API_KEY",
+            "Content-Type": "application/json",
+          },
+        }, effectiveProxy);
+        return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
       case "deepseek": {
         const res = await fetchWithConnectionProxy("https://api.deepseek.com/models", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };

@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
-import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal, CodexImportModal } from "@/shared/components";
+import { Card, Button, Badge, Input, Modal, CardSkeleton, OAuthModal, KiroOAuthWrapper, KiroApiKeyModal, CursorAuthModal, IFlowCookieModal, GitLabAuthModal, Toggle, Select, EditConnectionModal, NoAuthProxyCard, ConfirmModal, CodexImportModal } from "@/shared/components";
 import { OAUTH_PROVIDERS, APIKEY_PROVIDERS, FREE_PROVIDERS, FREE_TIER_PROVIDERS, WEB_COOKIE_PROVIDERS, getProviderAlias, isOpenAICompatibleProvider, isAnthropicCompatibleProvider, AI_PROVIDERS, THINKING_CONFIG } from "@/shared/constants/providers";
 import { getModelsByProviderId } from "@/shared/constants/models";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
@@ -35,6 +35,7 @@ export default function ProviderDetailPage() {
   const [showOAuthModal, setShowOAuthModal] = useState(false);
   const [showIFlowCookieModal, setShowIFlowCookieModal] = useState(false);
   const [showCodexImport, setShowCodexImport] = useState(false);
+  const [showKiroApiKey, setShowKiroApiKey] = useState(false);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
   const [showEditModal, setShowEditModal] = useState(false);
@@ -1345,6 +1346,11 @@ export default function ProviderDetailPage() {
                         Import JSON
                       </Button>
                     )}
+                    {providerId === "kiro" && (
+                      <Button size="sm" variant="secondary" icon="key" onClick={() => setShowKiroApiKey(true)} className="w-full sm:w-auto">
+                        API Keys
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       icon="add"
@@ -1392,6 +1398,11 @@ export default function ProviderDetailPage() {
                   {providerId === "codex" && (
                     <Button size="sm" variant="secondary" icon="data_object" onClick={() => setShowCodexImport(true)} className="w-full sm:w-auto">
                       Import JSON
+                    </Button>
+                  )}
+                  {providerId === "kiro" && (
+                    <Button size="sm" variant="secondary" icon="key" onClick={() => setShowKiroApiKey(true)} className="w-full sm:w-auto">
+                      API Keys
                     </Button>
                   )}
                   {hasDualAuthModes ? (
@@ -1509,6 +1520,13 @@ export default function ProviderDetailPage() {
           isOpen={showCodexImport}
           onSuccess={() => fetchConnections()}
           onClose={() => setShowCodexImport(false)}
+        />
+      )}
+      {providerId === "kiro" && (
+        <KiroApiKeyModal
+          isOpen={showKiroApiKey}
+          onSuccess={() => fetchConnections()}
+          onClose={() => setShowKiroApiKey(false)}
         />
       )}
       <AddApiKeyModal

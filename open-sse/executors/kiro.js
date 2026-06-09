@@ -21,7 +21,14 @@ export class KiroExecutor extends BaseExecutor {
       "Amz-Sdk-Invocation-Id": uuidv4()
     };
 
-    if (credentials.accessToken) {
+    // Kiro API key (ksk_) is used directly as a bearer token, but requires the
+    // `tokentype: API_KEY` header — without it CodeWhisperer returns 403
+    // "The bearer token included in the request is invalid." OAuth access
+    // tokens (Builder ID / IdC / social) use the plain Authorization header.
+    if (credentials.apiKey) {
+      headers["Authorization"] = `Bearer ${credentials.apiKey}`;
+      headers["tokentype"] = "API_KEY";
+    } else if (credentials.accessToken) {
       headers["Authorization"] = `Bearer ${credentials.accessToken}`;
     }
 
@@ -30,6 +37,23 @@ export class KiroExecutor extends BaseExecutor {
 
   transformRequest(model, body, stream, credentials) {
     return body;
+  }
+
+  /**
+   * API-key (ksk_) requests authenticate against the Amazon Q host
+   * (q.<region>.amazonaws.com) rather than the CodeWhisperer host used by the
+   * OAuth flow. Swap the host when an apiKey credential is present; OAuth
+   * access tokens keep the configured CodeWhisperer baseUrl.
+   */
+  buildUrl(model, stream, urlIndex = 0, credentials = null) {
+    const url = super.buildUrl(model, stream, urlIndex, credentials);
+    if (credentials?.apiKey && typeof url === "string") {
+      return url.replace(
+        /^https:\/\/codewhisperer\.([a-z0-9-]+)\.amazonaws\.com/,
+        "https://q.$1.amazonaws.com"
+      );
+    }
+    return url;
   }
 
   /**
