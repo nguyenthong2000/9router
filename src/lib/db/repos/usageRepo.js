@@ -33,21 +33,37 @@ function getLocalDateKey(timestamp) {
 }
 
 function addToCounter(target, key, values) {
-  if (!target[key]) target[key] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
+  if (!target[key]) target[key] = { requests: 0, failures: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
+  // Backfill `failures` for counters created before this field existed.
+  if (target[key].failures === undefined) target[key].failures = 0;
   target[key].requests += values.requests || 1;
+  target[key].failures += values.failures || 0;
   target[key].promptTokens += values.promptTokens || 0;
   target[key].completionTokens += values.completionTokens || 0;
   target[key].cost += values.cost || 0;
   if (values.meta) Object.assign(target[key], values.meta);
 }
 
+function isFailureStatus(status) {
+  if (status === undefined || status === null) return false;
+  const s = String(status).toLowerCase();
+  if (s === "ok") return false;
+  // Numeric HTTP code or strings like "200 OK" / "503 ..." → 2xx is success.
+  const code = parseInt(s, 10);
+  if (Number.isFinite(code)) return code < 200 || code >= 300;
+  // Non-numeric, non-"ok" labels (e.g. "error") are failures.
+  return true;
+}
+
 function aggregateEntryToDay(day, entry) {
   const promptTokens = entry.tokens?.prompt_tokens || entry.tokens?.input_tokens || 0;
   const completionTokens = entry.tokens?.completion_tokens || entry.tokens?.output_tokens || 0;
   const cost = entry.cost || 0;
-  const vals = { promptTokens, completionTokens, cost };
+  const failures = isFailureStatus(entry.status) ? 1 : 0;
+  const vals = { promptTokens, completionTokens, cost, failures };
 
   day.requests = (day.requests || 0) + 1;
+  day.failures = (day.failures || 0) + failures;
   day.promptTokens = (day.promptTokens || 0) + promptTokens;
   day.completionTokens = (day.completionTokens || 0) + completionTokens;
   day.cost = (day.cost || 0) + cost;
@@ -368,6 +384,7 @@ export async function getUsageStats(period = "all") {
     totalRequests: 0,
     totalPromptTokens: 0, totalCompletionTokens: 0, totalCost: 0,
     byProvider: {}, byModel: {}, byAccount: {}, byApiKey: {}, byEndpoint: {},
+    byConnection: {},
     last10Minutes: [],
     pending: pendingRequests,
     activeRequests: [],
@@ -430,8 +447,9 @@ export async function getUsageStats(period = "all") {
       stats.totalCost += day.cost || 0;
 
       for (const [prov, p] of Object.entries(day.byProvider || {})) {
-        if (!stats.byProvider[prov]) stats.byProvider[prov] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
+        if (!stats.byProvider[prov]) stats.byProvider[prov] = { requests: 0, failures: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
         stats.byProvider[prov].requests += p.requests || 0;
+        stats.byProvider[prov].failures += p.failures || 0;
         stats.byProvider[prov].promptTokens += p.promptTokens || 0;
         stats.byProvider[prov].completionTokens += p.completionTokens || 0;
         stats.byProvider[prov].cost += p.cost || 0;
@@ -443,9 +461,10 @@ export async function getUsageStats(period = "all") {
         const statsKey = provider ? `${rawModel} (${provider})` : rawModel;
         const providerDisplayName = providerNodeNameMap[provider] || provider;
         if (!stats.byModel[statsKey]) {
-          stats.byModel[statsKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0, rawModel, provider: providerDisplayName, lastUsed: dateKey };
+          stats.byModel[statsKey] = { requests: 0, failures: 0, promptTokens: 0, completionTokens: 0, cost: 0, rawModel, provider: providerDisplayName, lastUsed: dateKey };
         }
         stats.byModel[statsKey].requests += m.requests || 0;
+        stats.byModel[statsKey].failures += m.failures || 0;
         stats.byModel[statsKey].promptTokens += m.promptTokens || 0;
         stats.byModel[statsKey].completionTokens += m.completionTokens || 0;
         stats.byModel[statsKey].cost += m.cost || 0;
@@ -459,9 +478,10 @@ export async function getUsageStats(period = "all") {
         const providerDisplayName = providerNodeNameMap[provider] || provider;
         const accountKey = `${rawModel} (${provider} - ${accountName})`;
         if (!stats.byAccount[accountKey]) {
-          stats.byAccount[accountKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0, rawModel, provider: providerDisplayName, connectionId: connId, accountName, lastUsed: dateKey };
+          stats.byAccount[accountKey] = { requests: 0, failures: 0, promptTokens: 0, completionTokens: 0, cost: 0, rawModel, provider: providerDisplayName, connectionId: connId, accountName, lastUsed: dateKey };
         }
         stats.byAccount[accountKey].requests += a.requests || 0;
+        stats.byAccount[accountKey].failures += a.failures || 0;
         stats.byAccount[accountKey].promptTokens += a.promptTokens || 0;
         stats.byAccount[accountKey].completionTokens += a.completionTokens || 0;
         stats.byAccount[accountKey].cost += a.cost || 0;
@@ -539,7 +559,7 @@ export async function getUsageStats(period = "all") {
       cutoff = new Date(Date.now() - PERIOD_MS["24h"]).toISOString();
     }
     const filtered = db.all(
-      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, tokens FROM usageHistory WHERE timestamp >= ?`,
+      `SELECT timestamp, provider, model, connectionId, apiKey, endpoint, promptTokens, completionTokens, cost, status, tokens FROM usageHistory WHERE timestamp >= ?`,
       [cutoff]
     );
 
@@ -548,23 +568,26 @@ export async function getUsageStats(period = "all") {
       const promptTokens = tokens.prompt_tokens || 0;
       const completionTokens = tokens.completion_tokens || 0;
       const entryCost = r.cost || 0;
+      const isFailure = isFailureStatus(r.status) ? 1 : 0;
       const providerDisplayName = providerNodeNameMap[r.provider] || r.provider;
 
       stats.totalPromptTokens += promptTokens;
       stats.totalCompletionTokens += completionTokens;
       stats.totalCost += entryCost;
 
-      if (!stats.byProvider[r.provider]) stats.byProvider[r.provider] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
+      if (!stats.byProvider[r.provider]) stats.byProvider[r.provider] = { requests: 0, failures: 0, promptTokens: 0, completionTokens: 0, cost: 0 };
       stats.byProvider[r.provider].requests++;
+      stats.byProvider[r.provider].failures += isFailure;
       stats.byProvider[r.provider].promptTokens += promptTokens;
       stats.byProvider[r.provider].completionTokens += completionTokens;
       stats.byProvider[r.provider].cost += entryCost;
 
       const modelKey = r.provider ? `${r.model} (${r.provider})` : r.model;
       if (!stats.byModel[modelKey]) {
-        stats.byModel[modelKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, lastUsed: r.timestamp };
+        stats.byModel[modelKey] = { requests: 0, failures: 0, promptTokens: 0, completionTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, lastUsed: r.timestamp };
       }
       stats.byModel[modelKey].requests++;
+      stats.byModel[modelKey].failures += isFailure;
       stats.byModel[modelKey].promptTokens += promptTokens;
       stats.byModel[modelKey].completionTokens += completionTokens;
       stats.byModel[modelKey].cost += entryCost;
@@ -574,9 +597,10 @@ export async function getUsageStats(period = "all") {
         const accountName = connectionMap[r.connectionId] || `Account ${r.connectionId.slice(0, 8)}...`;
         const accountKey = `${r.model} (${r.provider} - ${accountName})`;
         if (!stats.byAccount[accountKey]) {
-          stats.byAccount[accountKey] = { requests: 0, promptTokens: 0, completionTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, connectionId: r.connectionId, accountName, lastUsed: r.timestamp };
+          stats.byAccount[accountKey] = { requests: 0, failures: 0, promptTokens: 0, completionTokens: 0, cost: 0, rawModel: r.model, provider: providerDisplayName, connectionId: r.connectionId, accountName, lastUsed: r.timestamp };
         }
         stats.byAccount[accountKey].requests++;
+        stats.byAccount[accountKey].failures += isFailure;
         stats.byAccount[accountKey].promptTokens += promptTokens;
         stats.byAccount[accountKey].completionTokens += completionTokens;
         stats.byAccount[accountKey].cost += entryCost;
@@ -614,6 +638,23 @@ export async function getUsageStats(period = "all") {
   }
 
   stats.totalRequests = Object.values(stats.byProvider).reduce((sum, p) => sum + (p.requests || 0), 0);
+
+  // Roll byAccount (keyed per model) up to one entry per connectionId so the UI
+  // can show success/fail per account in O(1).
+  for (const a of Object.values(stats.byAccount)) {
+    const connId = a.connectionId;
+    if (!connId) continue;
+    if (!stats.byConnection[connId]) {
+      stats.byConnection[connId] = { requests: 0, failures: 0, promptTokens: 0, completionTokens: 0, cost: 0, accountName: a.accountName, provider: a.provider };
+    }
+    const c = stats.byConnection[connId];
+    c.requests += a.requests || 0;
+    c.failures += a.failures || 0;
+    c.promptTokens += a.promptTokens || 0;
+    c.completionTokens += a.completionTokens || 0;
+    c.cost += a.cost || 0;
+  }
+
   return stats;
 }
 
@@ -629,10 +670,10 @@ export async function getChartData(period = "7d") {
     const startTime = startOfDay.getTime();
     const endTime = startTime + bucketCount * bucketMs;
     const labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-    const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0 }));
+    const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0, requests: 0, failures: 0 }));
 
     const rows = db.all(
-      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
+      `SELECT timestamp, promptTokens, completionTokens, cost, status FROM usageHistory WHERE timestamp >= ?`,
       [new Date(startTime).toISOString()]
     );
     for (const r of rows) {
@@ -642,6 +683,8 @@ export async function getChartData(period = "7d") {
       if (idx >= 0 && idx < bucketCount) {
         buckets[idx].tokens += (r.promptTokens || 0) + (r.completionTokens || 0);
         buckets[idx].cost += r.cost || 0;
+        buckets[idx].requests += 1;
+        buckets[idx].failures += isFailureStatus(r.status) ? 1 : 0;
       }
     }
     return buckets;
@@ -652,10 +695,10 @@ export async function getChartData(period = "7d") {
     const bucketMs = 3600000;
     const labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
     const startTime = now - bucketCount * bucketMs;
-    const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0 }));
+    const buckets = Array.from({ length: bucketCount }, (_, i) => ({ label: labelFn(startTime + i * bucketMs), tokens: 0, cost: 0, requests: 0, failures: 0 }));
 
     const rows = db.all(
-      `SELECT timestamp, promptTokens, completionTokens, cost FROM usageHistory WHERE timestamp >= ?`,
+      `SELECT timestamp, promptTokens, completionTokens, cost, status FROM usageHistory WHERE timestamp >= ?`,
       [new Date(startTime).toISOString()]
     );
     for (const r of rows) {
@@ -664,6 +707,8 @@ export async function getChartData(period = "7d") {
       const idx = Math.min(Math.floor((t - startTime) / bucketMs), bucketCount - 1);
       buckets[idx].tokens += (r.promptTokens || 0) + (r.completionTokens || 0);
       buckets[idx].cost += r.cost || 0;
+      buckets[idx].requests += 1;
+      buckets[idx].failures += isFailureStatus(r.status) ? 1 : 0;
     }
     return buckets;
   }
@@ -686,8 +731,131 @@ export async function getChartData(period = "7d") {
       label: labelFn(d),
       tokens: dayData ? (dayData.promptTokens || 0) + (dayData.completionTokens || 0) : 0,
       cost: dayData ? (dayData.cost || 0) : 0,
+      requests: dayData ? (dayData.requests || 0) : 0,
+      failures: dayData ? (dayData.failures || 0) : 0,
     };
   });
+}
+
+// Max account lines drawn at once — keeps the chart readable. Accounts are
+// ranked by total request volume; the rest are dropped (caller is told how many).
+const MAX_RATE_CHART_ACCOUNTS = 15;
+
+/**
+ * Per-account success-rate chart data.
+ *
+ * Returns one series per account that made at least one call in the period.
+ * Each bucket holds `rate_<connectionId>` = success% for that account in that
+ * bucket. Buckets where the account made no calls are 100% (no downtime), so
+ * the caller fills gaps with 100 rather than dropping points.
+ *
+ * @param {string} period today | 24h | 7d | 30d | 60d
+ * @returns {Promise<{ buckets: object[], accounts: {id,name,requests}[], truncated: number }>}
+ */
+export async function getSuccessRateChartData(period = "7d") {
+  const db = await getAdapter();
+  const now = Date.now();
+
+  let allConnections = [];
+  try {
+    const { getProviderConnections } = await import("./connectionsRepo.js");
+    allConnections = await getProviderConnections();
+  } catch {}
+  const connectionMap = {};
+  for (const c of allConnections) connectionMap[c.id] = c.name || c.email || c.id;
+  const nameFor = (id) => connectionMap[id] || `Account ${String(id).slice(0, 8)}...`;
+
+  // Per-account per-bucket tallies: tally[connId][bucketIdx] = { req, fail }.
+  const tally = {};
+  const totalReq = {};
+  const ensure = (connId, idx) => {
+    if (!tally[connId]) tally[connId] = {};
+    if (!tally[connId][idx]) tally[connId][idx] = { req: 0, fail: 0 };
+    return tally[connId][idx];
+  };
+  const addRow = (connId, idx, isFail) => {
+    if (!connId) return;
+    const cell = ensure(connId, idx);
+    cell.req += 1;
+    cell.fail += isFail ? 1 : 0;
+    totalReq[connId] = (totalReq[connId] || 0) + 1;
+  };
+
+  let labels = [];
+
+  if (period === "today" || period === "24h") {
+    const bucketCount = 24;
+    const bucketMs = 3600000;
+    let startTime;
+    if (period === "today") {
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
+      startTime = startOfDay.getTime();
+    } else {
+      startTime = now - bucketCount * bucketMs;
+    }
+    const endTime = period === "today" ? startTime + bucketCount * bucketMs : now;
+    const labelFn = (ts) => new Date(ts).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
+    labels = Array.from({ length: bucketCount }, (_, i) => labelFn(startTime + i * bucketMs));
+
+    const rows = db.all(
+      `SELECT timestamp, connectionId, status FROM usageHistory WHERE timestamp >= ?`,
+      [new Date(startTime).toISOString()]
+    );
+    for (const r of rows) {
+      if (!r.connectionId) continue;
+      const t = new Date(r.timestamp).getTime();
+      if (t < startTime || t > endTime) continue;
+      const idx = Math.min(Math.floor((t - startTime) / bucketMs), bucketCount - 1);
+      if (idx < 0 || idx >= bucketCount) continue;
+      addRow(r.connectionId, idx, isFailureStatus(r.status));
+    }
+  } else {
+    const bucketCount = period === "7d" ? 7 : period === "30d" ? 30 : 60;
+    const today = new Date();
+    const labelFn = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+    const dayRows = loadDaysInRange(db, bucketCount);
+    const dayMap = {};
+    for (const r of dayRows) dayMap[r.dateKey] = parseJson(r.data, {});
+
+    for (let i = 0; i < bucketCount; i++) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - (bucketCount - 1 - i));
+      labels.push(labelFn(d));
+      const dateKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      const byAccount = dayMap[dateKey]?.byAccount || {};
+      for (const [connId, a] of Object.entries(byAccount)) {
+        const req = a.requests || 0;
+        if (req <= 0) continue;
+        const cell = ensure(connId, i);
+        cell.req += req;
+        cell.fail += a.failures || 0;
+        totalReq[connId] = (totalReq[connId] || 0) + req;
+      }
+    }
+  }
+
+  // Rank accounts by volume, keep the top N.
+  const ranked = Object.keys(totalReq).sort((a, b) => totalReq[b] - totalReq[a]);
+  const kept = ranked.slice(0, MAX_RATE_CHART_ACCOUNTS);
+  const truncated = Math.max(0, ranked.length - kept.length);
+
+  const accounts = kept.map((id) => ({ id, name: nameFor(id), requests: totalReq[id] }));
+
+  // Build buckets. Missing account/bucket → 100% (no calls = no downtime).
+  const buckets = labels.map((label, idx) => {
+    const row = { label };
+    for (const id of kept) {
+      const cell = tally[id]?.[idx];
+      row[`rate_${id}`] = cell && cell.req > 0
+        ? Math.round(((cell.req - cell.fail) / cell.req) * 100)
+        : 100;
+    }
+    return row;
+  });
+
+  return { buckets, accounts, truncated };
 }
 
 function formatLogDate(date = new Date()) {

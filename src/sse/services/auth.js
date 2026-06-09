@@ -233,6 +233,14 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
   log.warn("AUTH", `${connName} locked ${lockKey} for ${Math.round(cooldownMs / 1000)}s [${status}]`);
 
+  // Record the failed call so per-account success/fail stats reflect errors.
+  // Best-effort: never block the fallback flow. tokens={} keeps token/cost stats intact.
+  import("@/lib/usageDb.js")
+    .then(({ saveRequestUsage }) =>
+      saveRequestUsage({ provider, model, connectionId, tokens: {}, status: "error", errorCode: status })
+    )
+    .catch(() => {});
+
   if (provider && status && reason) {
     console.error(`❌ ${provider} [${status}]: ${reason}`);
   }

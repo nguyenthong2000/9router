@@ -5,6 +5,8 @@ import PropTypes from "prop-types";
 import {
   AreaChart,
   Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -22,53 +24,126 @@ const fmtTokens = (n) => {
 
 const fmtCost = (n) => `$${(n || 0).toFixed(4)}`;
 
+// Distinct-ish palette cycled across account lines.
+const ACCOUNT_COLORS = [
+  "#10b981", "#6366f1", "#f59e0b", "#ef4444", "#06b6d4",
+  "#8b5cf6", "#ec4899", "#84cc16", "#f97316", "#14b8a6",
+  "#3b82f6", "#a855f7", "#eab308", "#22c55e", "#e11d48",
+];
+
 export default function UsageChart({ period = "7d" }) {
   const [data, setData] = useState([]);
+  const [rateData, setRateData] = useState({ buckets: [], accounts: [], truncated: 0 });
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState("tokens");
 
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/usage/chart?period=${period}`);
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
+      if (viewMode === "rate") {
+        const res = await fetch(`/api/usage/chart?period=${period}&breakdown=account`);
+        if (res.ok) {
+          const json = await res.json();
+          setRateData({
+            buckets: Array.isArray(json?.buckets) ? json.buckets : [],
+            accounts: Array.isArray(json?.accounts) ? json.accounts : [],
+            truncated: json?.truncated || 0,
+          });
+        }
+      } else {
+        const res = await fetch(`/api/usage/chart?period=${period}`);
+        if (res.ok) {
+          const json = await res.json();
+          setData(Array.isArray(json) ? json : []);
+        }
       }
     } catch (e) {
       console.error("Failed to fetch chart data:", e);
     } finally {
       setLoading(false);
     }
-  }, [period]);
+  }, [period, viewMode]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  const hasData = data.some((d) => d.tokens > 0 || d.cost > 0);
+  const hasData =
+    viewMode === "rate"
+      ? rateData.accounts.length > 0
+      : data.some((d) => d.tokens > 0 || d.cost > 0);
+
+  const renderModeButton = (mode, label) => (
+    <button
+      onClick={() => setViewMode(mode)}
+      className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === mode ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
+    >
+      {label}
+    </button>
+  );
 
   return (
     <Card className="flex min-w-0 flex-col gap-3 p-3 sm:p-4">
-      <div className="grid w-full grid-cols-2 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:w-auto sm:self-start">
-        <button
-          onClick={() => setViewMode("tokens")}
-          className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "tokens" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
-        >
-          Tokens
-        </button>
-        <button
-          onClick={() => setViewMode("cost")}
-          className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${viewMode === "cost" ? "bg-primary text-white shadow-sm" : "text-text-muted hover:text-text hover:bg-bg-hover"}`}
-        >
-          Cost
-        </button>
+      <div className="grid w-full grid-cols-3 items-center gap-1 rounded-lg border border-border bg-bg-subtle p-1 sm:w-auto sm:self-start">
+        {renderModeButton("tokens", "Tokens")}
+        {renderModeButton("cost", "Cost")}
+        {renderModeButton("rate", "Success rate")}
       </div>
+
+      {viewMode === "rate" && rateData.truncated > 0 && (
+        <p className="text-xs text-text-muted">
+          Showing top {rateData.accounts.length} accounts by volume ({rateData.truncated} more hidden).
+        </p>
+      )}
 
       {loading ? (
         <div className="h-48 flex items-center justify-center text-text-muted text-sm">Loading...</div>
       ) : !hasData ? (
         <div className="h-48 flex items-center justify-center text-text-muted text-sm">No data for this period</div>
+      ) : viewMode === "rate" ? (
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={rateData.buckets} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" strokeOpacity={0.1} />
+            <XAxis
+              dataKey="label"
+              tick={{ fontSize: 10, fill: "currentColor", fillOpacity: 0.5 }}
+              tickLine={false}
+              axisLine={false}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              tick={{ fontSize: 10, fill: "currentColor", fillOpacity: 0.5 }}
+              tickLine={false}
+              axisLine={false}
+              tickFormatter={(v) => `${v}%`}
+              domain={[0, 100]}
+              width={50}
+            />
+            <Tooltip
+              contentStyle={{
+                backgroundColor: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "8px",
+                fontSize: "12px",
+              }}
+              formatter={(value, name) => [`${value}%`, name]}
+            />
+            <Legend wrapperStyle={{ fontSize: "11px" }} />
+            {rateData.accounts.map((acc, i) => (
+              <Line
+                key={acc.id}
+                type="monotone"
+                dataKey={`rate_${acc.id}`}
+                name={acc.name}
+                stroke={ACCOUNT_COLORS[i % ACCOUNT_COLORS.length]}
+                strokeWidth={2}
+                dot={false}
+                activeDot={{ r: 3 }}
+                connectNulls
+              />
+            ))}
+          </LineChart>
+        </ResponsiveContainer>
       ) : (
         <ResponsiveContainer width="100%" height={220}>
           <AreaChart data={data} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>

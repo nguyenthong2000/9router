@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import ProviderIcon from "@/shared/components/ProviderIcon";
 import QuotaTable from "./QuotaTable";
+import AccountCallStats from "./AccountCallStats";
 import Toggle from "@/shared/components/Toggle";
 import { parseQuotaData, calculatePercentage } from "./utils";
 import Card from "@/shared/components/Card";
@@ -223,6 +224,7 @@ const ACCOUNT_PAGE_SIZE_MAX = 500;
 export default function ProviderLimits() {
   const [connections, setConnections] = useState([]);
   const [quotaData, setQuotaData] = useState({});
+  const [callStats, setCallStats] = useState({});
   const [loading, setLoading] = useState({});
   const [errors, setErrors] = useState({});
   const [autoRefresh, setAutoRefresh] = useState(true);
@@ -381,6 +383,20 @@ export default function ProviderLimits() {
     }
   }, []);
 
+  // Fetch per-connection success/fail call stats (fixed 7d window)
+  const fetchCallStats = useCallback(async () => {
+    try {
+      const response = await fetch("/api/usage/stats?period=7d", {
+        cache: "no-store",
+      });
+      if (!response.ok) return;
+      const data = await response.json();
+      setCallStats(data?.byConnection || {});
+    } catch (error) {
+      console.error("Error fetching call stats:", error);
+    }
+  }, []);
+
   // Refresh quota for a specific provider
   const refreshProvider = useCallback(
     async (connectionId, provider) => {
@@ -526,13 +542,14 @@ export default function ProviderLimits() {
         visibleConnections.map((conn) => fetchQuota(conn.id, conn.provider)),
       );
 
+      await fetchCallStats();
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Error refreshing all providers:", error);
     } finally {
       setRefreshingAll(false);
     }
-  }, [refreshingAll, fetchConnections, fetchQuota, page]);
+  }, [refreshingAll, fetchConnections, fetchQuota, fetchCallStats, page]);
 
   useEffect(() => {
     const initializeData = async () => {
@@ -552,11 +569,12 @@ export default function ProviderLimits() {
       await Promise.all(
         visibleConnections.map((conn) => fetchQuota(conn.id, conn.provider)),
       );
+      await fetchCallStats();
       setLastUpdated(new Date());
     };
 
     initializeData();
-  }, [fetchConnections, fetchQuota, page]);
+  }, [fetchConnections, fetchQuota, fetchCallStats, page]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1143,6 +1161,7 @@ export default function ProviderLimits() {
                     }
                   />
                 )}
+                <AccountCallStats stats={callStats[conn.id]} />
               </div>
             </Card>
           );
