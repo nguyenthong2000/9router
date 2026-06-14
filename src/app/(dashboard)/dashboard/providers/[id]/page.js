@@ -17,6 +17,7 @@ import ConnectionRow from "./ConnectionRow";
 import AddApiKeyModal from "./AddApiKeyModal";
 import EditCompatibleNodeModal from "./EditCompatibleNodeModal";
 import AddCustomModelModal from "./AddCustomModelModal";
+import BulkImportCodexModal from "./BulkImportCodexModal";
 
 const ONE_BY_ONE_DELAY_MS = 1000;
 
@@ -38,6 +39,7 @@ export default function ProviderDetailPage() {
   const [showKiroApiKey, setShowKiroApiKey] = useState(false);
   const [showAddApiKeyModal, setShowAddApiKeyModal] = useState(false);
   const [addConnectionError, setAddConnectionError] = useState("");
+  const [showBulkImportCodex, setShowBulkImportCodex] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
   const [showBulkProxyModal, setShowBulkProxyModal] = useState(false);
@@ -1342,9 +1344,14 @@ export default function ProviderDetailPage() {
                       </Button>
                     )}
                     {providerId === "codex" && (
-                      <Button size="sm" variant="secondary" icon="data_object" onClick={() => setShowCodexImport(true)} className="w-full sm:w-auto">
-                        Import JSON
-                      </Button>
+                      <>
+                        <Button size="sm" variant="secondary" icon="data_object" onClick={() => setShowCodexImport(true)} className="w-full sm:w-auto">
+                          Import JSON
+                        </Button>
+                        <Button size="sm" icon="playlist_add" variant="secondary" onClick={() => setShowBulkImportCodex(true)}>
+                          {translate("Bulk Add")}
+                        </Button>
+                      </>
                     )}
                     {providerId === "kiro" && (
                       <Button size="sm" variant="secondary" icon="key" onClick={() => setShowKiroApiKey(true)} className="w-full sm:w-auto">
@@ -1396,9 +1403,21 @@ export default function ProviderDetailPage() {
                     </Button>
                   )}
                   {providerId === "codex" && (
-                    <Button size="sm" variant="secondary" icon="data_object" onClick={() => setShowCodexImport(true)} className="w-full sm:w-auto">
-                      Import JSON
-                    </Button>
+                    <>
+                      <Button size="sm" variant="secondary" icon="data_object" onClick={() => setShowCodexImport(true)} className="w-full sm:w-auto">
+                        Import JSON
+                      </Button>
+                      <Button
+                        size="sm"
+                        icon="playlist_add"
+                        variant="secondary"
+                        onClick={() => setShowBulkImportCodex(true)}
+                        title={translate("Bulk import codex accounts from JSON")}
+                        className="w-full sm:w-auto"
+                      >
+                        {translate("Bulk Add")}
+                      </Button>
+                    </>
                   )}
                   {providerId === "kiro" && (
                     <Button size="sm" variant="secondary" icon="key" onClick={() => setShowKiroApiKey(true)} className="w-full sm:w-auto">
@@ -1577,6 +1596,14 @@ export default function ProviderDetailPage() {
             setShowAddCustomModel(false);
           }}
           onClose={() => setShowAddCustomModel(false)}
+        />
+      )}
+
+      {providerId === "codex" && (
+        <BulkImportCodexModal
+          isOpen={showBulkImportCodex}
+          onClose={() => setShowBulkImportCodex(false)}
+          onSuccess={fetchConnections}
         />
       )}
 
