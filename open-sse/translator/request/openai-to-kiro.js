@@ -9,8 +9,7 @@ import {
   resolveKiroModel,
   isThinkingEnabled,
   buildThinkingSystemPrefix,
-  KIRO_AGENTIC_SYSTEM_PROMPT,
-  resolveDefaultProfileArn
+  KIRO_AGENTIC_SYSTEM_PROMPT
 } from "../../config/kiroConstants.js";
 
 /** Render a single tool call as a readable text line. */
@@ -521,8 +520,7 @@ export function buildKiroPayload(model, body, stream, credentials) {
 
   const { history, currentMessage } = convertMessages(messages, tools, upstreamModel);
 
-  const profileArn = credentials?.providerSpecificData?.profileArn
-    || resolveDefaultProfileArn(credentials?.providerSpecificData?.authMethod);
+  const profileArn = credentials?.providerSpecificData?.profileArn || "";
 
   let finalContent = currentMessage?.userInputMessage?.content || "";
 

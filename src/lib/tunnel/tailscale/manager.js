@@ -1,5 +1,5 @@
 import { loadState, generateShortId } from "../shared/state.js";
-import { startFunnel, stopFunnel, isTailscaleRunning, isTailscaleRunningStrict, isTailscaleLoggedIn, isTailscaleLoggedInStrict, startLogin, startDaemonWithPassword, provisionCert } from "./tailscale.js";
+import { startFunnel, stopFunnel, isTailscaleRunning, isTailscaleRunningStrict, isTailscaleLoggedIn, startLogin, startDaemonWithPassword, provisionCert } from "./tailscale.js";
 import { waitForHealth } from "./healthCheck.js";
 import { getSettings, updateSettings } from "@/lib/localDb";
 import { getCachedPassword, loadEncryptedPassword, initDbHooks } from "@/mitm/manager";
@@ -37,7 +37,7 @@ export async function enableTailscale(localPort = 20128) {
     const shortId = existing?.shortId || generateShortId();
     const tsHostname = shortId;
 
-    const loggedIn = await isTailscaleLoggedInStrict();
+    const loggedIn = isTailscaleLoggedIn();
     console.log(`[Tailscale] loggedIn=${loggedIn}`);
     if (!loggedIn) {
       const loginResult = await startLogin(tsHostname);
@@ -72,7 +72,7 @@ export async function enableTailscale(localPort = 20128) {
     }
 
     // Strict probe: bypass cache so we don't false-negative on first invocation
-    if (!(await isTailscaleLoggedInStrict()) || !(await isTailscaleRunningStrict())) {
+    if (!isTailscaleLoggedIn() || !isTailscaleRunningStrict()) {
       console.error("[Tailscale] strict probe failed (device removed?)");
       stopFunnel();
       return { success: false, error: "Tailscale not connected. Device may have been removed. Please re-login." };

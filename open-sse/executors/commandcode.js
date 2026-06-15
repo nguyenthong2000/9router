@@ -19,11 +19,6 @@ export class CommandCodeExecutor extends BaseExecutor {
     super("commandcode", PROVIDERS.commandcode);
   }
 
-  transformRequest(model, body, stream, credentials) {
-    body.stream = true;
-    return body;
-  }
-
   buildHeaders(credentials, stream = true) {
     const headers = {
       "Content-Type": "application/json",
